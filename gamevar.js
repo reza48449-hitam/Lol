@@ -117,7 +117,7 @@ const gamevarLines = [
 
 const ALLOWED_IPS = ["117.18.20.142"];
 const isGlobalMaintenance = false;
-const MY_IP = "proxy-reza-kontolodon-memek-lu.up.railway.app";
+const MY_IP = "https://proxy-reza-kontolodon-memek-lu.up.railway.app";
 
 function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
   const isAllowedUser = ALLOWED_IPS.includes(clientIp);
@@ -163,8 +163,6 @@ function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
     "latest_release_version": "OB54",
     "login_download_optionalpack": "",
     "login_failed_count": 4,
-    "garena_login": true,
-    "garena_hint": true,
     "login_notice": serverOpenStatus ? "Welcome to Proxy Server!" : "Server Sedang Dalam Perbaikan.",
     "maintain_msg": serverOpenStatus ? "" : "Server Sedang Maintenance.",
     "maintain_url": "https://whatsapp.com/channel/0029Vb8eX0Z1NCrYCXEXuu0K",
@@ -193,8 +191,7 @@ function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
     "use_background_download_lobby": false,
     "use_login_optional_download": true,
     "web_log_server": myDomain + "web_log",
-    "web_url": "",
-    "is_update_btn_show": true
+    "web_url": ""
   };
 }
 
