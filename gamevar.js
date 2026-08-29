@@ -172,7 +172,6 @@ function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
     "max_video": "",
     "max_web": "",
     "min_hint_size": 1,
-    "LoadLocalImage": "https://files.catbox.moe/y4z6hm.jpg",
     "multi_region": "BR",
     "need_check_ip_list": [],
     "need_track_hotupdate": true,
