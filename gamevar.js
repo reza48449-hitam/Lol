@@ -117,8 +117,29 @@ const gamevarLines = [
 
 const ALLOWED_IPS = ["117.18.20.142"];
 const isGlobalMaintenance = false;
-const MY_IP = "https://proxy-reza-kontolodon-memek-lu.up.railway.app";
+const MY_IP = "https://proxy-reza-kontolodon-memek.up.railway.app";
 
+// ============ PATCH CODE 2 — hanya ganti CDN fields ============
+function patchCode2(rawResponse, myDomain = MY_IP) {
+  if (rawResponse.code !== 2) return rawResponse; // code 0/1 → skip, ga disentuh
+
+  const CDN_BASE = myDomain + "cdn/";
+
+  return {
+    ...rawResponse,                    // semua field asli tetap
+    code: 0,                           // reset ke 0 biar client nganggep OK
+    abhotupdate_cdn_url: CDN_BASE,
+    backup_cdn_url: CDN_BASE,
+    cdn_active: myDomain,
+    cdn_url: CDN_BASE,
+    img_cdn_url: CDN_BASE,
+    res_url: CDN_BASE,
+    billboard_cdn_url: myDomain,
+    gamevar: gamevarLines.join("\n"),
+  };
+}
+
+// ============ CONFIG PENUH (dipakai langsung kalau server mati total) ============
 function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
   const isAllowedUser = ALLOWED_IPS.includes(clientIp);
   const serverOpenStatus = isGlobalMaintenance ? isAllowedUser : true;
@@ -195,4 +216,4 @@ function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
   };
 }
 
-module.exports = { getVerConfig };
+module.exports = { getVerConfig, patchCode2 };
