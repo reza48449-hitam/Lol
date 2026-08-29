@@ -117,7 +117,7 @@ const gamevarLines = [
 
 const ALLOWED_IPS = ["117.18.20.142"];
 const isGlobalMaintenance = false;
-const MY_IP = "https://proxy-reza-kontolodon-memek.up.railway.app";
+const MY_IP = "proxy-reza-kontolodon-memek-lu.up.railway.app";
 
 function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
   const isAllowedUser = ALLOWED_IPS.includes(clientIp);
