@@ -14,8 +14,8 @@ function buildGamevarLines(myDomain) {
 
         "code,code,int32,0,,",
 
-        "RunSpeed,RunSpeed,float,6,,",
-        "DashSpeedScale,DashSpeedScale,float,10,,",
+        "RunSpeed,RunSpeed,float,5,,",
+        "DashSpeedScale,DashSpeedScale,float,7.2,,",
         "CrouchSpeed,CrouchSpeed,float,2.5,,",
         "DieingSpeed,DieingSpeed,float,1,,",
         "SwimSpeed,SwimSpeed,float,4.2,,",
@@ -31,13 +31,13 @@ function buildGamevarLines(myDomain) {
         "StropFallingResetSpeed,StropFallingResetSpeed,bool,false,,",
         "StropFallingDamageMax,StropFallingDamageMax,int32,0,,",
 
-        "SensitivityMaxSetting,SensitivityMaxSetting,float,9.5,,",
-        "Sensitivity1PMaxSetting,Sensitivity1PMaxSetting,float,9.5,,",
-        "X1ScopeMaxSetting,X1ScopeMaxSetting,float,9.5,,",
-        "X2ScopeMaxSetting,X2ScopeMaxSetting,float,9.5,,",
-        "X4ScopeMaxSetting,X4ScopeMaxSetting,float,9.5,,",
-        "X8ScopeMaxSetting,X8ScopeMaxSetting,float,9.5,,",
-        "FreeLookMaxSetting,FreeLookMaxSetting,float,9.5,,",
+        "SensitivityMaxSetting,SensitivityMaxSetting,float,9.9,,",
+        "Sensitivity1PMaxSetting,Sensitivity1PMaxSetting,float,9.9,,",
+        "X1ScopeMaxSetting,X1ScopeMaxSetting,float,9.9,,",
+        "X2ScopeMaxSetting,X2ScopeMaxSetting,float,9.9,,",
+        "X4ScopeMaxSetting,X4ScopeMaxSetting,float,9.9,,",
+        "X8ScopeMaxSetting,X8ScopeMaxSetting,float,9.9,,",
+        "FreeLookMaxSetting,FreeLookMaxSetting,float,9.9,,",
     ];
 }
 
