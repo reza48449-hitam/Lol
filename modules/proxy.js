@@ -1,12 +1,10 @@
-// modules/proxy.js — ANTI-DETECT BYPASS v2.3
-// PATCH v2.3:
-//   - Tambah /MajorLogin ke INTERCEPT map + patchMajorLogin() yang strip ban fields
-//   - Tambah forwardAndAbsorb() untuk idevent.ggblueshark.com — intercept telemetry
-//     yang dikirim langsung ke domain Garena (bukan lewat proxy) dan fake 200 ok
-//   - Tambah ABSORB_DOMAINS: semua request ke idevent/vodka/gin/grtc langsung di-absorb
-//   - patchMajorLogin: strip AEBBNFBNIDB (ban info), OBLLHDOLLGO (anti-addiction),
-//     ak/aiv null prevention, ban_mode force ke 0
-//   - Semua patcher sekarang juga handle case-insensitive path di INTERCEPT
+// modules/proxy.js — ANTI-DETECT BYPASS v2.4
+// PATCH v2.4 — Fix root causes dari log 14:42:
+//   - patchMajorLogin: tambah patch POEPGJPHCMJ → redirect idevent ke proxy
+//   - patchMajorLogin: nuke FOGGNIHIBPG (traceroute list)
+//   - patchMajorLogin: nuke CECNLHCONMI (GGP) + LJAPOJNBOFE (GRTC)
+//   - patchMajorLogin: nuke EMFPDECPCDG, POEPGJPHCMJ, PDJHKBDIHGL, IIPKMIOFCJP
+//   - MY_DOMAIN auto-detect dari Host header request
 
 const https  = require('https');
 const crypto = require('crypto');
@@ -107,22 +105,18 @@ function patchUploadDisabled(buf) {
         const wireType = tag & 0x07;
         if (wireType !== 0) continue;
         if ((fieldNum === 1 || fieldNum === 2 || fieldNum === 8) && out[i + 1] === 0x00) {
-            out[i + 1] = 0x01;
-            hit = true;
-            i++;
+            out[i + 1] = 0x01; hit = true; i++;
         }
         if (fieldNum === 9 && out[i + 1] === 0x01) {
-            out[i + 1] = 0x00;
-            hit = true;
-            i++;
+            out[i + 1] = 0x00; hit = true; i++;
         }
     }
-    if (hit) console.log('[PATCH] ✅ upload-disabled flipped (surgical)');
+    if (hit) console.log('[PATCH] ✅ upload-disabled flipped');
     return out;
 }
 
 // ============================================================
-//  LAYER 6 — GetLoginData GGP/CECNLHCONMI NUKE
+//  LAYER 6 — GetLoginData GGP NUKE
 // ============================================================
 function patchGetLoginData(buf) {
     if (!Buffer.isBuffer(buf) || !buf.length) return buf;
@@ -130,39 +124,13 @@ function patchGetLoginData(buf) {
         const str = buf.toString('utf-8');
         if (!str.trim().startsWith('{')) return buf;
         const json = JSON.parse(str);
-
-        if (json.CECNLHCONMI) {
-            json.CECNLHCONMI = {
-                is_report_to_ggp:   false,
-                ggp_url:            '',
-                ut_flag:            0,
-                is_transfer_report: false,
-                is_enable_ggp:      false,
-                content:            '',
-                is_get_feature:     false,
-                is_get_flag:        false,
-                is_enable_tcp:      false,
-            };
-            console.log('[GGP-NUKE] ✅ CECNLHCONMI patched');
-        }
-
-        if (json.FOGGNIHIBPG) { json.FOGGNIHIBPG = [];  console.log('[TRACE-NUKE] ✅ traceroute cleared'); }
-        if (json.LJAPOJNBOFE) { json.LJAPOJNBOFE = '';  console.log('[GRTC-NUKE] ✅ GRTC cleared'); }
-        if (json.EMFPDECPCDG) json.EMFPDECPCDG = '';
-        if (json.POEPGJPHCMJ) json.POEPGJPHCMJ = '';
-        if (json.PDJHKBDIHGL) json.PDJHKBDIHGL = '';
-        if (json.IIPKMIOFCJP) json.IIPKMIOFCJP = '';
-        if (json.DEVICECHECK)  { json.DEVICECHECK  = null; console.log('[DCHECK-NUKE] ✅ DEVICECHECK stripped'); }
-        if (json.GGPCHECKHASH) { json.GGPCHECKHASH = '';   console.log('[HASH-NUKE] ✅ GGPCHECKHASH stripped'); }
-
+        nukeCommonFields(json, '');
         return Buffer.from(JSON.stringify(json));
-    } catch (e) {
-        return buf;
-    }
+    } catch (e) { return buf; }
 }
 
 // ============================================================
-//  LAYER 7 — LOGIN RESPONSE CLEANER (LoginGetDesc, etc)
+//  LAYER 7 — LOGIN RESPONSE CLEANER
 // ============================================================
 function patchLoginResponse(buf) {
     if (!Buffer.isBuffer(buf) || !buf.length) return buf;
@@ -170,124 +138,153 @@ function patchLoginResponse(buf) {
         const str = buf.toString('utf-8');
         if (!str.trim().startsWith('{')) return buf;
         const json = JSON.parse(str);
-
-        const NUKE_FIELDS = [
-            'GGPCHECKHASH', 'DEVICECHECK', 'GGPCONFIG',
-            'ANTIADDICTION', 'JAILBREAK_DETECTED',
-            'ROOT_DETECTED',  'EMULATOR_DETECTED',
-            'HOOK_DETECTED',  'MODIFIER_DETECTED',
-        ];
-
-        let hit = false;
-        for (const f of NUKE_FIELDS) {
-            if (json[f] !== undefined) {
-                json[f] = typeof json[f] === 'string' ? '' : (typeof json[f] === 'boolean' ? false : null);
-                hit = true;
-            }
-        }
-
-        if (hit) console.log('[LOGIN-CLEAN] ✅ Anti-cheat flags stripped from login response');
+        nukeCommonFields(json, '');
         return Buffer.from(JSON.stringify(json));
-    } catch (e) {
-        return buf;
+    } catch (e) { return buf; }
+}
+
+// ============================================================
+//  HELPER — nuke field anticheat yang ada di berbagai response
+// ============================================================
+function nukeCommonFields(json, proxyDomain) {
+    // GGP: disable semua
+    if (json.CECNLHCONMI) {
+        json.CECNLHCONMI = {
+            is_report_to_ggp:   false,
+            ggp_url:            '',
+            ut_flag:            0,
+            is_transfer_report: false,
+            is_enable_ggp:      false,
+            content:            '',
+            is_get_feature:     false,
+            is_get_flag:        false,
+            is_enable_tcp:      false,
+        };
+        console.log('[GGP-NUKE] ✅ CECNLHCONMI disabled');
+    }
+
+    // GRTC: kosongkan agar SDK ga konek ke Garena
+    if (json.LJAPOJNBOFE !== undefined) {
+        json.LJAPOJNBOFE = '';
+        console.log('[GRTC-NUKE] ✅ LJAPOJNBOFE cleared');
+    }
+
+    // Traceroute list: kosongkan
+    if (json.FOGGNIHIBPG !== undefined) {
+        json.FOGGNIHIBPG = [];
+        console.log('[TRACE-NUKE] ✅ FOGGNIHIBPG cleared');
+    }
+
+    // Event/network server URLs: redirect ke proxy atau kosongkan
+    // POEPGJPHCMJ = idevent URL — redirect ke proxy agar LogEvent lewat kita
+    if (json.POEPGJPHCMJ !== undefined) {
+        json.POEPGJPHCMJ = proxyDomain || '';
+        console.log('[EVENT-REDIRECT] ✅ POEPGJPHCMJ → proxy');
+    }
+    if (json.EMFPDECPCDG !== undefined) { json.EMFPDECPCDG = ''; }
+    if (json.PDJHKBDIHGL !== undefined) { json.PDJHKBDIHGL = ''; }
+    if (json.IIPKMIOFCJP !== undefined) { json.IIPKMIOFCJP = ''; }
+
+    // Device check fields
+    if (json.DEVICECHECK  !== undefined) { json.DEVICECHECK  = null; }
+    if (json.GGPCHECKHASH !== undefined) { json.GGPCHECKHASH = ''; }
+
+    // Generic detection flags
+    const NUKE = [
+        'GGPCONFIG', 'ANTIADDICTION', 'JAILBREAK_DETECTED',
+        'ROOT_DETECTED', 'EMULATOR_DETECTED', 'HOOK_DETECTED', 'MODIFIER_DETECTED',
+    ];
+    for (const f of NUKE) {
+        if (json[f] !== undefined)
+            json[f] = typeof json[f] === 'string' ? '' : (typeof json[f] === 'boolean' ? false : null);
     }
 }
 
 // ============================================================
-//  PATCH v2.3 — MAJORLOGIN BAN PATCHER
-//  Root cause #2: MajorLogin response bawa AEBBNFBNIDB (ban_mode != 0)
-//  dan ak/aiv null → client nunjukin UIAccountForbiddenPopWndController
-//  Fix: force ban_mode=0, strip detection flags, inject dummy ak/aiv
+//  PATCH v2.4 — MAJORLOGIN FULL NUKE
+//  Fix semua yang ketahuan dari log 14:42:
+//   - POEPGJPHCMJ masih idevent.ggblueshark.com → redirect ke proxy
+//   - FOGGNIHIBPG traceroute masih ada → kosongkan
+//   - CECNLHCONMI GGP masih enable → disable
+//   - LJAPOJNBOFE GRTC masih ada → kosongkan
+//   - AEBBNFBNIDB ban_mode → force 0
+//   - ak/aiv null → inject dummy
 // ============================================================
-function patchMajorLogin(buf) {
-    if (!Buffer.isBuffer(buf) || !buf.length) return buf;
-    try {
-        const str = buf.toString('utf-8');
-        if (!str.trim().startsWith('{')) return buf;
-        const json = JSON.parse(str);
+function makeMajorLoginPatcher(proxyDomain) {
+    return function patchMajorLogin(buf) {
+        if (!Buffer.isBuffer(buf) || !buf.length) return buf;
+        try {
+            const str = buf.toString('utf-8');
+            if (!str.trim().startsWith('{')) return buf;
+            const json = JSON.parse(str);
 
-        // Force ban info ke clean state
-        // AEBBNFBNIDB = ban_mode object dari server
-        if (json.AEBBNFBNIDB !== undefined) {
-            json.AEBBNFBNIDB = {
-                ban_mode:           0,
-                unban_time:         0,
-                history_update_ts:  Math.floor(Date.now() / 1000),
-                history_seconds:    0,
-                hint_string:        '',
-                play_time:          0,
-                guardian_setting:   null,
-            };
-            console.log('[BAN-NUKE] ✅ AEBBNFBNIDB ban_mode forced to 0');
-        }
+            // Nuke semua field anticheat + redirect event URL
+            nukeCommonFields(json, proxyDomain);
 
-        // OBLLHDOLLGO = anti-addiction config — force semua switch off
-        if (json.OBLLHDOLLGO !== undefined && json.OBLLHDOLLGO.anti_addiction_switch_desc) {
-            json.OBLLHDOLLGO.anti_addiction_switch_desc.function_switch = false;
-            json.OBLLHDOLLGO.anti_addiction_switch_desc.children_group  = false;
-            json.OBLLHDOLLGO.anti_addiction_switch_desc.skip            = true;
-            console.log('[ANTI-ADD-NUKE] ✅ anti_addiction_switch_desc disabled');
-        }
-
-        // Strip detection/check fields dari login response
-        const NUKE_FIELDS = [
-            'GGPCHECKHASH', 'DEVICECHECK', 'GGPCONFIG',
-            'ANTIADDICTION', 'JAILBREAK_DETECTED',
-            'ROOT_DETECTED', 'EMULATOR_DETECTED',
-            'HOOK_DETECTED', 'MODIFIER_DETECTED',
-        ];
-        for (const f of NUKE_FIELDS) {
-            if (json[f] !== undefined) {
-                json[f] = typeof json[f] === 'string' ? '' : (typeof json[f] === 'boolean' ? false : null);
+            // Ban info: force clean
+            if (json.AEBBNFBNIDB !== undefined) {
+                json.AEBBNFBNIDB = {
+                    ban_mode:          0,
+                    unban_time:        0,
+                    history_update_ts: Math.floor(Date.now() / 1000),
+                    history_seconds:   0,
+                    hint_string:       '',
+                    play_time:         0,
+                    guardian_setting:  null,
+                };
+                console.log('[BAN-NUKE] ✅ AEBBNFBNIDB ban_mode forced 0');
             }
-        }
 
-        // Jika ak/aiv null (ban signal) → inject dummy value
-        // ServiceConnectionManager log "Get ak or aiv is null from backend!"
-        if (json.ak  === null || json.ak  === undefined || json.ak  === '') {
-            json.ak  = crypto.randomBytes(16).toString('hex');
-            console.log('[AK-INJECT] ✅ ak injected');
-        }
-        if (json.aiv === null || json.aiv === undefined || json.aiv === '') {
-            json.aiv = crypto.randomBytes(8).toString('hex');
-            console.log('[AIV-INJECT] ✅ aiv injected');
-        }
+            // Anti-addiction: disable
+            if (json.OBLLHDOLLGO && json.OBLLHDOLLGO.anti_addiction_switch_desc) {
+                json.OBLLHDOLLGO.anti_addiction_switch_desc.function_switch = false;
+                json.OBLLHDOLLGO.anti_addiction_switch_desc.children_group  = false;
+                json.OBLLHDOLLGO.anti_addiction_switch_desc.skip            = true;
+                console.log('[ANTI-ADD] ✅ anti_addiction disabled');
+            }
 
-        console.log('[MAJORLOGIN-PATCH] ✅ MajorLogin response patched');
-        return Buffer.from(JSON.stringify(json));
-    } catch (e) {
-        console.log('[MAJORLOGIN-PATCH] ⚠️ parse error:', e.message);
-        return buf;
-    }
+            // ak/aiv null prevention
+            if (!json.ak  || json.ak  === '') { json.ak  = crypto.randomBytes(16).toString('hex'); console.log('[AK-INJECT] ✅'); }
+            if (!json.aiv || json.aiv === '') { json.aiv = crypto.randomBytes(8).toString('hex');  console.log('[AIV-INJECT] ✅'); }
+
+            console.log('[MAJORLOGIN] ✅ MajorLogin fully patched');
+            return Buffer.from(JSON.stringify(json));
+        } catch (e) {
+            console.log('[MAJORLOGIN] ⚠️ parse error:', e.message);
+            return buf;
+        }
+    };
 }
+
+// Placeholder patcher — akan diganti waktu init() dipanggil dengan domain yang benar
+let _patchMajorLogin = makeMajorLoginPatcher('');
 
 // ============================================================
 //  INTERCEPT MAP
 // ============================================================
 const INTERCEPT = {
-    '/getlogindata':                patchGetLoginData,
-    '/GetLoginData':                patchGetLoginData,
-    '/logingetdesc':                patchLoginResponse,
-    '/LoginGetDesc':                patchLoginResponse,
-    // PATCH v2.3: MajorLogin sekarang di-patch
-    '/majorlogin':                  patchMajorLogin,
-    '/MajorLogin':                  patchMajorLogin,
-    '/getpersonalshow':             patchUploadDisabled,
-    '/GetPersonalShow':             patchUploadDisabled,
-    '/getplayerpersonalshow':       patchUploadDisabled,
-    '/GetPlayerPersonalShow':       patchUploadDisabled,
-    '/getclientconfig':             patchUploadDisabled,
-    '/GetClientConfig':             patchUploadDisabled,
-    '/getgameconfig':               patchUploadDisabled,
-    '/GetGameConfig':               patchUploadDisabled,
-    '/getserverconfig':             patchUploadDisabled,
-    '/GetServerConfig':             patchUploadDisabled,
-    '/getaccountinfo':              patchUploadDisabled,
-    '/GetAccountInfo':              patchUploadDisabled,
-    '/checkversion':                patchUploadDisabled,
-    '/CheckVersion':                patchUploadDisabled,
-    '/getmaintenanceconfig':        patchUploadDisabled,
-    '/GetMaintenanceConfig':        patchUploadDisabled,
+    '/getlogindata':          patchGetLoginData,
+    '/GetLoginData':          patchGetLoginData,
+    '/logingetdesc':          patchLoginResponse,
+    '/LoginGetDesc':          patchLoginResponse,
+    '/majorlogin':            (buf) => _patchMajorLogin(buf),
+    '/MajorLogin':            (buf) => _patchMajorLogin(buf),
+    '/getpersonalshow':       patchUploadDisabled,
+    '/GetPersonalShow':       patchUploadDisabled,
+    '/getplayerpersonalshow': patchUploadDisabled,
+    '/GetPlayerPersonalShow': patchUploadDisabled,
+    '/getclientconfig':       patchUploadDisabled,
+    '/GetClientConfig':       patchUploadDisabled,
+    '/getgameconfig':         patchUploadDisabled,
+    '/GetGameConfig':         patchUploadDisabled,
+    '/getserverconfig':       patchUploadDisabled,
+    '/GetServerConfig':       patchUploadDisabled,
+    '/getaccountinfo':        patchUploadDisabled,
+    '/GetAccountInfo':        patchUploadDisabled,
+    '/checkversion':          patchUploadDisabled,
+    '/CheckVersion':          patchUploadDisabled,
+    '/getmaintenanceconfig':  patchUploadDisabled,
+    '/GetMaintenanceConfig':  patchUploadDisabled,
 };
 
 function getPatcher(p) {
@@ -329,7 +326,6 @@ async function forwardRequest(req, res, targetUrl, agent) {
             proxyRes.on('data', c => chunks.push(c));
             proxyRes.on('end', () => {
                 let buf = Buffer.concat(chunks);
-
                 const patcher = getPatcher(req.path);
                 if (patcher) buf = patcher(buf);
 
@@ -339,7 +335,6 @@ async function forwardRequest(req, res, targetUrl, agent) {
                         safe[k] = v;
                 }
                 safe['Content-Length'] = buf.length;
-
                 res.writeHead(proxyRes.statusCode, safe);
                 res.end(buf);
                 resolve();
@@ -383,59 +378,30 @@ function registerTelemetryAbsorbers(app) {
         res.status(200).json({ code: 0, msg: 'ok', ts: Date.now() });
     };
 
-    app.all('/LogEvent',          absorb);
-    app.all('/logevent',          absorb);
-    app.all('/api/LogEvent',      absorb);
-    app.all('/report',            absorb);
-    app.all('/Report',            absorb);
-    app.all('/datareport',        absorb);
-    app.all('/DataReport',        absorb);
-    app.all('/upload',            absorb);
-    app.all('/Upload',            absorb);
-    app.all('/vodka/*',           absorb);
-    app.all('/gateway/*',         absorb);
-    app.all('/network/*',         absorb);
-    app.all('/event/*',           absorb);
-    app.all('/gin/*',             absorb);
-    app.all('/ggp/*',             absorb);
-    app.all('/web_log',           absorb);
-    app.all('/network_log',       absorb);
-    app.all('/api/network_log',   absorb);
-    app.all('/api/web_log',       absorb);
-    app.all('/api/gin_dummy',     absorb);
-    app.all('/api/web_dummy',     absorb);
-    app.all('/SubmitReport',      absorb);
-    app.all('/SendHackLog',       absorb);
-    app.all('/SendGinInfo',       absorb);
-    app.all('/SendClientLog',     absorb);
-    app.all('/ReportPlayer',      absorb);
-    app.all('/UploadClientLog',   absorb);
-    app.all('/UploadLog',         absorb);
-    app.all('/uploadlog',         absorb);
-    app.all('/traceroute',        absorb);
-    app.all('/probe',             absorb);
-    app.all('/ping_probe',        absorb);
-    // PATCH v2.3: tambah endpoint deteksi aplikasi
-    app.all('/AndroidApplicationDetection', absorb);
-    app.all('/androidapplicationdetection', absorb);
-    app.all('/api/gin_dummyNetworkLogEvent', absorb);
-    app.all('/GinReport',         absorb);
-    app.all('/ginreport',         absorb);
-    app.all('/FFAntiReport',      absorb);
-    app.all('/ffantireport',      absorb);
+    const paths = [
+        '/LogEvent', '/logevent', '/api/LogEvent',
+        '/report', '/Report', '/datareport', '/DataReport',
+        '/upload', '/Upload',
+        '/vodka/*', '/gateway/*', '/network/*', '/event/*',
+        '/gin/*', '/ggp/*',
+        '/web_log', '/network_log',
+        '/api/network_log', '/api/web_log',
+        '/api/gin_dummy', '/api/web_dummy',
+        '/api/gin_dummyNetworkLogEvent',
+        '/SubmitReport', '/SendHackLog', '/SendGinInfo',
+        '/SendClientLog', '/ReportPlayer',
+        '/UploadClientLog', '/UploadLog', '/uploadlog',
+        '/traceroute', '/probe', '/ping_probe',
+        '/AndroidApplicationDetection', '/androidapplicationdetection',
+        '/GinReport', '/ginreport',
+        '/FFAntiReport', '/ffantireport',
+        '/detection', '/Detection',
+        '/hacklog', '/HackLog',
+    ];
 
-    console.log('[TELEMETRY] All absorbers registered (v2.3)');
+    for (const p of paths) app.all(p, absorb);
+    console.log('[TELEMETRY] Absorbers registered (v2.4)');
 }
-
-// ============================================================
-//  PATCH v2.3 — EXTERNAL TELEMETRY INTERCEPTOR
-//  Root cause #1: game ngirim EventTypeAndroidApplicationDetection
-//  langsung ke idevent.ggblueshark.com (bukan lewat proxy)
-//  Fix: intercept di ver.php response — redirect network_log_server
-//       dan web_log_server ke proxy domain kita sendiri
-//  Ini handle di gamevar.js (MY_IP + 'api/gin_dummy')
-//  Tapi juga perlu handle kalau ada request ke domain lain yang lolos
-// ============================================================
 
 // ============================================================
 //  SKIP PATH SET
@@ -463,18 +429,31 @@ function shouldSkip(p) {
 //  INIT
 // ============================================================
 function init(app) {
+    // Detect proxy domain dari env atau fallback ke Railway URL
+    const proxyDomain = process.env.PROXY_DOMAIN ||
+        (process.env.RAILWAY_PUBLIC_DOMAIN
+            ? 'https://' + process.env.RAILWAY_PUBLIC_DOMAIN + '/'
+            : 'https://proxy-reza-kontolodon-memek.up.railway.app/');
+
+    console.log('[PROXY] proxyDomain =', proxyDomain);
+
+    // Update MajorLogin patcher dengan domain yang sudah diketahui
+    _patchMajorLogin = makeMajorLoginPatcher(proxyDomain);
+
     registerTelemetryAbsorbers(app);
 
     app.get('/api/proxy/status', (req, res) => {
         res.json({
-            status: 'online', mode: 'anti_detect_bypass_v2.3',
+            status: 'online', mode: 'anti_detect_bypass_v2.4',
+            proxyDomain,
             layers: [
                 'header_obf', 'timing_jitter', 'tls_spoof', 'header_clean',
                 'upload_patch_surgical', 'getlogindata_ggp_nuke',
-                'login_response_clean', 'majorlogin_ban_patch',
-                'telemetry_absorb', 'app_detection_absorb',
+                'login_response_clean', 'majorlogin_full_nuke',
+                'poepgjphcmj_redirect', 'foggnihibpg_clear',
+                'cecnlhconmi_disable', 'ljapojnbofe_clear',
+                'telemetry_absorb',
             ],
-            targets: { login: GARENA_LOGIN_SERVER, client: GARENA_CLIENT_SERVER },
             ts: Date.now(),
         });
     });
@@ -489,8 +468,7 @@ function init(app) {
         await forwardRequest(req, res, target + req.url, agent);
     });
 
-    console.log('[PROXY] Anti-detect v2.3 ON');
-    console.log('[PROXY] Layers: header_obf|jitter|tls|clean|upload_patch_surgical|ggp_nuke|login_clean|majorlogin_ban_patch|telemetry_absorb|app_detection_absorb');
+    console.log('[PROXY] Anti-detect v2.4 ON');
 }
 
 module.exports = { init };
