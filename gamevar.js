@@ -12,25 +12,27 @@ function buildGamevarLines(myDomain) {
     return [
         "var_name,comment,var_type,var_value,var_region,var_platform",
 
-        "code,code,int32,0,,",
-
-        "RunSpeed,RunSpeed,float,5,,",
-        "DashSpeedScale,DashSpeedScale,float,7.2,,",
-        "CrouchSpeed,CrouchSpeed,float,2.5,,",
-        "DieingSpeed,DieingSpeed,float,1,,",
-        "SwimSpeed,SwimSpeed,float,4.2,,",
-        "ResetRotationSpeed,ResetRotationSpeed,float,100,,",
-        "CarryingWalkSpeedScale,CarryingWalkSpeedScale,float,100,,",
-        "HighFallActionSpeed,HighFallActionSpeed,float,100,,",
-        "CatapultSpeed,CatapultSpeed,float,100,,",
-        "StropUseCooldown,StropUseCooldown,float,100,,",
-        "CrossOverJumpHorizontalSpeed,CrossOverJumpHorizontalSpeed,float,100,,",
+        // ============ SPEED ============
+        "RunSpeed,RunSpeed,float,6.7,,",
+        "DashSpeedScale,DashSpeedScale,float,8.9,,",
+        "MaxRunSpeed,MaxRunSpeed,float,8.9,,",
         "CanJumpFallingRunFast,CanJumpFallingRunFast,bool,true,,",
         "CanCreepRunFast,CanCreepRunFast,bool,true,,",
         "CanCrouchingRunFast,CanCrouchingRunFast,bool,true,,",
         "StropFallingResetSpeed,StropFallingResetSpeed,bool,false,,",
         "StropFallingDamageMax,StropFallingDamageMax,int32,0,,",
+        "CrossOverJumpHorizontalSpeed,CrossOverJumpHorizontalSpeed,float,100,,",
 
+        // ============ JUMP ============
+        "JumpHeight,JumpHeight,float,10.5,,",
+        "JumpSpeed,JumpSpeed,float,11.5,,",
+        "GravityScale,GravityScale,float,0.5,,",
+        "MaxJumpCount,MaxJumpCount,int,3,,",
+
+        // ============ WEAPON SPEED ============
+        "FastSwap,FastSwap,bool,true,,",
+        "SwapSpeed,SwapSpeed,float,0.1,,",
+        // ============ SENSITIVITY ============
         "SensitivityMaxSetting,SensitivityMaxSetting,float,9.9,,",
         "Sensitivity1PMaxSetting,Sensitivity1PMaxSetting,float,9.9,,",
         "X1ScopeMaxSetting,X1ScopeMaxSetting,float,9.9,,",
@@ -38,38 +40,32 @@ function buildGamevarLines(myDomain) {
         "X4ScopeMaxSetting,X4ScopeMaxSetting,float,9.9,,",
         "X8ScopeMaxSetting,X8ScopeMaxSetting,float,9.9,,",
         "FreeLookMaxSetting,FreeLookMaxSetting,float,9.9,,",
+
+        // ============ OUTLINE ENEMY ============
+        "ShowEnemyOutline,ShowEnemyOutline,bool,true,,",
+        "EnableEnemyOutline,EnableEnemyOutline,bool,true,,",
+        "EnemyOutlineColorR,EnemyOutlineColorR,float,1.0,,",
+        "EnemyOutlineColorG,EnemyOutlineColorG,float,0.0,,",
+        "EnemyOutlineColorB,EnemyOutlineColorB,float,0.0,,",
+        "EnemyOutlineWidth,EnemyOutlineWidth,float,3.0,,",
+        "EnableOutlineEnemy,EnableOutlineEnemy,bool,true,,",
+        "OutlineEnemyEnable,OutlineEnemyEnable,bool,true,,",
     ];
 }
 
-// ============================================================
-//  LAYER 5 — DUMMY GIN ENDPOINT
-//  NOTE: Hanya register di sini sebagai fallback.
-//  proxy.js registerTelemetryAbsorbers() sudah handle semua
-//  dengan priority tinggi — jangan double-register path yang sama.
-// ============================================================
 function registerDummyEndpoints(app) {
     const absorb = (req, res) => {
         res.status(200).json({ code: 0, message: 'ok', ts: Date.now() });
     };
-
-    // Hanya endpoint yang TIDAK ada di proxy.js (path spesifik gamevar)
-    app.all('/api/gin_dummy',   absorb);
-    app.all('/api/web_dummy',   absorb);
-
+    app.all('/api/gin_dummy', absorb);
+    app.all('/api/web_dummy', absorb);
     console.log('[GAMEVAR] GIN/GGP dummy endpoints registered');
 }
 
-// ============================================================
-//  ALLOWED IPs & CONFIG
-// ============================================================
 const ALLOWED_IPS         = ["117.18.20.142"];
 const isGlobalMaintenance = false;
 const MY_IP               = "https://proxy-reza-kontolodon-memek.up.railway.app/";
 
-// ============================================================
-//  getVerConfig — dipakai modules/gamevar.js
-//  gamevar di-build fresh tiap request biar nilai obfuscated beda
-// ============================================================
 function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
     const isAllowedUser    = ALLOWED_IPS.includes(clientIp);
     const serverOpenStatus = isGlobalMaintenance ? isAllowedUser : true;
@@ -176,10 +172,6 @@ function getVerConfig(clientIp = "74.125.24.139", myDomain = MY_IP) {
     };
 }
 
-// ============================================================
-//  FALLBACK CONFIG
-//  FIX: gamevar di-lazy build via getter → jitter aktif per-akses
-// ============================================================
 const fallbackConfig = {
     "code":                                    2,
     "use_login_optional_download":             false,
@@ -203,7 +195,6 @@ const fallbackConfig = {
     "garena_login":                            true,
     "garena_hint":                             true,
     "gop_url":                                 "",
-    // FIX: get property → lazy build tiap akses → jitter aktif
     get gamevar() { return buildGamevarLines(MY_IP).join("\n"); },
     "device_whitelist_version":                "1.6.0",
     "whitelist_mask":                          0,
