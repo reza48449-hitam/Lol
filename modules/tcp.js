@@ -1,11 +1,11 @@
 'use strict';
 
 // ============================================================
-//  modules/tcp.js — Per-User TCP Bot Session Manager
-//  Versi  : 1.0.0
-//  Desain : Event-driven, 1 user = 1 lightweight session
-//           Tidak ada proses/worker terpisah per user.
-//           Semua isolasi dilakukan di level objek JS.
+//  modules/tcp.js — Per-User TCP Bot Session Manager v1.1.0
+//  Perubahan v1.1:
+//    - handleBannedUid(): auto-destroy session saat ban terdeteksi
+//    - Integrasi dengan proxy.js via setTcpManager()
+//    - Log ban event dengan ban_mode
 // ============================================================
 
 const net    = require('net');
@@ -28,10 +28,9 @@ function parseBotConfig() {
     return result;
 }
 
-// Cache config; di-rebuild saat dibutuhkan
 let _cachedBotCfg     = null;
 let _cachedBotCfgTime = 0;
-const BOT_CFG_TTL_MS  = 60_000; // re-parse tiap 60 detik
+const BOT_CFG_TTL_MS  = 60_000;
 
 function getBotCfg() {
     const now = Date.now();
@@ -45,21 +44,18 @@ function getBotCfg() {
 // ============================================================
 //  KONSTANTA
 // ============================================================
-const MAX_SESSIONS     = 50;            // batas maksimum session aktif
-const IDLE_TIMEOUT_MS  = 10 * 60_000;  // 10 menit tanpa aktivitas → cleanup
-const RECONNECT_DELAYS = [2, 5, 10, 30, 60]; // detik, exponential-like backoff
+const MAX_SESSIONS     = 50;
+const IDLE_TIMEOUT_MS  = 10 * 60_000;
+const RECONNECT_DELAYS = [2, 5, 10, 30, 60];
 const MAX_RETRIES      = RECONNECT_DELAYS.length;
-const READ_BUF_LIMIT   = 64 * 1024;    // 64 KB max per baca
+const READ_BUF_LIMIT   = 64 * 1024;
 
-// Packet type constants (dipakai saat decode nanti)
-const PT_CHAT_IN       = '1200';
-const PT_ONLINE_IN     = '0500';
+const PT_CHAT_IN   = '1200';
+const PT_ONLINE_IN = '0500';
 
 // ============================================================
-//  PROTOBUF HELPER (minimal, tanpa library tambahan)
-//  Sesuaikan dengan wire-format yang sudah dipakai di proxy.js
+//  PROTOBUF HELPERS
 // ============================================================
-
 function readVarintFromBuf(buf, offset) {
     let result = 0n;
     let shift  = 0n;
@@ -111,7 +107,6 @@ function encodeProto(fields) {
     return Buffer.concat(parts);
 }
 
-// AES-CBC encrypt/decrypt (key & iv adalah Buffer)
 function aesEncrypt(hex, key, iv) {
     const cipher  = crypto.createCipheriv('aes-128-cbc', key, iv);
     const data    = Buffer.from(hex, 'hex');
@@ -130,8 +125,6 @@ function aesDecrypt(buf, key, iv) {
     }
 }
 
-// Build packet dengan header FF (sesuai format TCP FF)
-// header format: [type 2B][00][00][size 2B LE]
 function buildPacket(typeHex, payloadHex, key, iv) {
     try {
         const enc     = aesEncrypt(payloadHex, key, iv);
@@ -147,30 +140,17 @@ function buildPacket(typeHex, payloadHex, key, iv) {
 // ============================================================
 //  PACKET BUILDERS
 // ============================================================
-
 function buildChatPacket(msg, senderUid, chatId, chatType, key, iv) {
     const ts = Math.floor(Date.now() / 1000);
     const fields = {
         1: 1,
         2: {
-            1: senderUid,
-            2: chatId,
-            3: chatType,
-            4: msg,
-            5: ts,
-            7: 2,
+            1: senderUid, 2: chatId, 3: chatType, 4: msg, 5: ts, 7: 2,
             9: {
-                1: 'SERVER PROXY BY REZA',
-                2: 330,
-                4: 330,
-                5: 102000015,
-                8: 'SERVER PROXY BY REZA',
-                10: 1,
-                11: 1,
-                13: { 1: 2 },
+                1: 'SERVER PROXY BY REZA', 2: 330, 4: 330, 5: 102000015,
+                8: 'SERVER PROXY BY REZA', 10: 1, 11: 1, 13: { 1: 2 },
             },
-            10: 'en',
-            13: { 2: 2, 3: 1 },
+            10: 'en', 13: { 2: 2, 3: 1 },
         },
     };
     const proto = encodeProto(fields).toString('hex');
@@ -178,41 +158,25 @@ function buildChatPacket(msg, senderUid, chatId, chatType, key, iv) {
 }
 
 function buildPrime8Packet(senderUid, chatId, key, iv) {
-    const ts     = Math.floor(Date.now() / 1000);
-    const share  = JSON.stringify({
-        SetShareID: 8,
-        ShareeAccountID: senderUid,
-        SharerAccountID: senderUid,
-        SetShareState: 1,
-        type: 'PrimeSetShare',
+    const ts    = Math.floor(Date.now() / 1000);
+    const share = JSON.stringify({
+        SetShareID: 8, ShareeAccountID: senderUid,
+        SharerAccountID: senderUid, SetShareState: 1, type: 'PrimeSetShare',
     });
     const fields = {
         1: 1,
         2: {
-            1: senderUid,
-            2: chatId,
-            3: 0,
-            5: ts,
-            7: 1,
-            8: share,
+            1: senderUid, 2: chatId, 3: 0, 5: ts, 7: 1, 8: share,
             9: {
-                1: 'SERVER PROXY BY REZA',
-                2: 330,
-                4: 330,
-                5: 102000015,
-                8: 'SERVER PROXY BY REZA',
-                10: 1,
-                11: 1,
-                13: { 1: 2 },
+                1: 'SERVER PROXY BY REZA', 2: 330, 4: 330, 5: 102000015,
+                8: 'SERVER PROXY BY REZA', 10: 1, 11: 1, 13: { 1: 2 },
                 14: {
-                    1: 1158053040,
-                    2: 8,
-                    3: Buffer.from([0x10, 0x15, 0x08, 0x0a, 0x0b, 0x15, 0x0c, 0x0f,
-                                    0x11, 0x04, 0x07, 0x02, 0x03, 0x0d, 0x0e, 0x12, 0x01, 0x05, 0x06]),
+                    1: 1158053040, 2: 8,
+                    3: Buffer.from([0x10,0x15,0x08,0x0a,0x0b,0x15,0x0c,0x0f,
+                                    0x11,0x04,0x07,0x02,0x03,0x0d,0x0e,0x12,0x01,0x05,0x06]),
                 },
             },
-            10: 'en',
-            13: { 2: 2, 3: 1 },
+            10: 'en', 13: { 2: 2, 3: 1 },
         },
     };
     const proto = encodeProto(fields).toString('hex');
@@ -220,19 +184,13 @@ function buildPrime8Packet(senderUid, chatId, key, iv) {
 }
 
 function buildBadgePacket(squadOwnerUid, badgeValue, key, iv) {
-    // Badge via join request — field layout sesuai xC4.py
     const fields = {
-        1: squadOwnerUid,
-        2: squadOwnerUid,
-        7: 1,
+        1: squadOwnerUid, 2: squadOwnerUid, 7: 1,
         14: {
             1: {
-                1: 1,
-                2: 1,
+                1: 1, 2: 1,
                 3: Math.floor(Math.random() * 180) + 1,
-                4: 1,
-                5: Math.floor(Date.now() / 1000),
-                6: 'IND',
+                4: 1, 5: Math.floor(Date.now() / 1000), 6: 'IND',
             },
         },
     };
@@ -240,11 +198,8 @@ function buildBadgePacket(squadOwnerUid, badgeValue, key, iv) {
     return buildPacket('1201', proto, key, iv);
 }
 
-// ============================================================
-//  INFO TEXT — baca dari gamevar / bot config
-// ============================================================
-const PROXY_BRAND    = '[FFF000][B]SERVER PROXY BY REZA';
-const BOT_BADGE_VAL  = 32768; // V-Badge s2
+const PROXY_BRAND   = '[FFF000][B]SERVER PROXY BY REZA';
+const BOT_BADGE_VAL = 32768;
 
 function buildInfoText() {
     return [
@@ -265,38 +220,31 @@ function buildInfoText() {
 // ============================================================
 //  SESSION CLASS
 // ============================================================
-
 class BotSession {
     constructor(sessionId, uid, serverIp, serverPort, key, iv, region) {
         this.sessionId    = sessionId;
         this.uid          = uid;
         this.serverIp     = serverIp;
         this.serverPort   = serverPort;
-        this.key          = key;         // Buffer — hanya hidup selama session
-        this.iv           = iv;          // Buffer — idem
+        this.key          = key;
+        this.iv           = iv;
         this.region       = region || 'IND';
 
-        // State
-        this.status       = 'connecting'; // connecting|connected|reconnecting|closed
+        this.status       = 'connecting';
         this.inSquad      = false;
         this.squadOwnerId = null;
         this.lastActivity = Date.now();
         this.retryCount   = 0;
+        this.banned       = false;   // ← flag ban
 
-        // Connection handles
         this._socket      = null;
         this._reconnTimer = null;
         this._idleTimer   = null;
         this._closed      = false;
 
-        // Cooldown untuk announce agar tidak spam
         this._lastAnnounce = 0;
-
-        // Announce cooldown
-        this._ANNOUNCE_CD  = 5000; // ms
+        this._ANNOUNCE_CD  = 5000;
     }
-
-    // ---- Lifecycle ----------------------------------------
 
     start() {
         if (this._closed) return;
@@ -305,11 +253,11 @@ class BotSession {
     }
 
     _connect() {
-        if (this._closed) return;
+        if (this._closed || this.banned) return;
 
         this._socket = new net.Socket();
         this._socket.setKeepAlive(true, 15_000);
-        this._socket.setTimeout(30_000); // 30 detik timeout baca
+        this._socket.setTimeout(30_000);
 
         this.status = 'connecting';
         log(this.sessionId, `Connecting to ${this.serverIp}:${this.serverPort}`);
@@ -323,20 +271,13 @@ class BotSession {
             this._onConnected();
         });
 
-        // Terima data dari server
         let readBuf = Buffer.alloc(0);
         this._socket.on('data', (chunk) => {
             this.lastActivity = Date.now();
             this._resetIdleTimer();
-
             readBuf = Buffer.concat([readBuf, chunk]);
-
-            // Guard: jangan biarkan buffer membengkak tak terbatas
-            if (readBuf.length > READ_BUF_LIMIT) {
+            if (readBuf.length > READ_BUF_LIMIT)
                 readBuf = readBuf.slice(readBuf.length - READ_BUF_LIMIT);
-            }
-
-            // Proses semua paket yang sudah lengkap
             readBuf = this._processBuffer(readBuf);
         });
 
@@ -346,14 +287,12 @@ class BotSession {
         });
 
         this._socket.on('error', (err) => {
-            // Jangan log error ECONNRESET yang umum terjadi
-            if (err.code !== 'ECONNRESET') {
+            if (err.code !== 'ECONNRESET')
                 log(this.sessionId, `Socket error: ${err.message}`);
-            }
         });
 
         this._socket.on('close', () => {
-            if (this._closed) return;
+            if (this._closed || this.banned) return;
             log(this.sessionId, 'Disconnected');
             this.status  = 'reconnecting';
             this.inSquad = false;
@@ -362,24 +301,17 @@ class BotSession {
     }
 
     _onConnected() {
-        // Kirim auth token / keep-alive awal jika diperlukan
-        // Saat ini placeholder — logika auth spesifik bisa ditambahkan
-        // sesuai format session yang diterima dari proxy
         log(this.sessionId, 'Session ready, bot features active');
     }
 
     _processBuffer(buf) {
-        // Format header minimal: 4 byte type + 2 byte size
         while (buf.length >= 6) {
             const typeHex = buf.slice(0, 2).toString('hex');
             const size    = buf.readUInt16BE(4);
             const total   = 6 + size;
-
-            if (buf.length < total) break; // tunggu data lebih
-
+            if (buf.length < total) break;
             const payload = buf.slice(6, total);
             buf           = buf.slice(total);
-
             this._handlePacket(typeHex, payload).catch((e) => {
                 log(this.sessionId, `Packet handler error: ${e.message}`);
             });
@@ -391,38 +323,23 @@ class BotSession {
         try {
             const dec = this.key && this.iv ? aesDecrypt(payload, this.key, this.iv) : payload;
             if (!dec) return;
-
             const hex = dec.toString('hex');
-
-            // Deteksi squad join (paket 0500 dengan data invite)
             if (typeHex === PT_ONLINE_IN) {
                 await this._handleOnlinePacket(hex);
-            }
-            // Deteksi chat incoming (1200)
-            else if (typeHex === '1200') {
+            } else if (typeHex === '1200') {
                 await this._handleChatPacket(hex);
             }
-        } catch (_) {
-            // Abaikan paket malformed
-        }
+        } catch (_) {}
     }
 
     async _handleOnlinePacket(hex) {
-        // Cek apakah ini squad invite (field 1 = tipe tertentu)
-        // Parsing minimal — cukup untuk deteksi join event
         try {
             const buf = Buffer.from(hex, 'hex');
             if (!buf.length) return;
-
             const { value: tag } = readVarintFromBuf(buf, 0);
             const fieldNum = Number(tag >> 3n);
-            if (fieldNum !== 1) return; // bukan paket yang relevan
-
-            // Jika sudah di squad, update lastActivity saja
+            if (fieldNum !== 1) return;
             if (this.inSquad) return;
-
-            // Deteksi gabung squad — setelah ini aktifkan fitur
-            // (logika lebih spesifik bisa ditambah sesuai packet sniffer)
         } catch (_) {}
     }
 
@@ -430,11 +347,8 @@ class BotSession {
         try {
             const buf = Buffer.from(hex, 'hex');
             if (buf.length < 4) return;
-
-            // Decode pesan masuk — cari field 4 (msg string)
             const msg = this._extractMsgFromProto(buf);
             if (!msg) return;
-
             if (msg.trim().toLowerCase() === '@info') {
                 await this._sendInfoReply();
             }
@@ -442,7 +356,6 @@ class BotSession {
     }
 
     _extractMsgFromProto(buf) {
-        // Scan wire-format sederhana untuk field 4 (pesan chat)
         let offset = 0;
         while (offset < buf.length) {
             const tagR  = readVarintFromBuf(buf, offset);
@@ -459,11 +372,8 @@ class BotSession {
                 offset    = lr.next;
                 const len = Number(lr.value);
                 if (offset + len > buf.length) break;
-
-                if (field === 4) { // field 4 = chat message string
+                if (field === 4)
                     return buf.slice(offset, offset + len).toString('utf8');
-                }
-                // Masuk ke nested (field 2 = data outer)
                 if (field === 2) {
                     const nested = this._extractMsgFromProto(buf.slice(offset, offset + len));
                     if (nested) return nested;
@@ -480,10 +390,24 @@ class BotSession {
         return null;
     }
 
-    // ---- Feature Actions ----------------------------------
+    // ---- Ban Handling ------------------------------------
+
+    /**
+     * Dipanggil oleh SessionManager saat proxy mendeteksi ban
+     * dari response Garena. Session langsung di-destroy,
+     * tidak reconnect.
+     */
+    markBanned(banMode) {
+        if (this._closed) return;
+        this.banned = true;
+        log(this.sessionId, `🚫 BANNED (ban_mode=${banMode}) — session destroyed`);
+        this.destroy();
+    }
+
+    // ---- Feature Actions ---------------------------------
 
     notifySquadJoin(squadOwnerUid) {
-        if (this._closed) return;
+        if (this._closed || this.banned) return;
         this.inSquad      = true;
         this.squadOwnerId = squadOwnerUid;
         this.lastActivity = Date.now();
@@ -492,28 +416,18 @@ class BotSession {
     }
 
     _runSquadJoinFeatures(squadOwnerUid) {
-        // Announce cooldown
         const now = Date.now();
         if (now - this._lastAnnounce >= this._ANNOUNCE_CD) {
             this._lastAnnounce = now;
             setTimeout(() => this._sendAnnouncement(squadOwnerUid), 2000);
         }
-
-        // Prime 8 + badge
         setTimeout(() => this._sendPrime8(squadOwnerUid), 1800);
-        setTimeout(() => this._sendBadge(squadOwnerUid), 2500);
+        setTimeout(() => this._sendBadge(squadOwnerUid),  2500);
     }
 
     _sendAnnouncement(squadOwnerUid) {
         if (!this.key || !this.iv || !this._isConnected()) return;
-        const pkt = buildChatPacket(
-            PROXY_BRAND,
-            this.uid,
-            squadOwnerUid,
-            0, // chat_type squad
-            this.key,
-            this.iv,
-        );
+        const pkt = buildChatPacket(PROXY_BRAND, this.uid, squadOwnerUid, 0, this.key, this.iv);
         this._writePacket(pkt);
         log(this.sessionId, 'Announcement sent');
     }
@@ -541,12 +455,8 @@ class BotSession {
         if (!this.key || !this.iv || !this._isConnected()) return;
         const chatId = this.squadOwnerId || this.uid;
         const pkt    = buildChatPacket(
-            buildInfoText(),
-            this.uid,
-            chatId,
-            this.inSquad ? 0 : 2, // squad atau private
-            this.key,
-            this.iv,
+            buildInfoText(), this.uid, chatId,
+            this.inSquad ? 0 : 2, this.key, this.iv,
         );
         this._writePacket(pkt);
         log(this.sessionId, '@info reply sent');
@@ -567,26 +477,20 @@ class BotSession {
             && this.status === 'connected';
     }
 
-    // ---- Reconnect ----------------------------------------
-
     _scheduleReconnect() {
-        if (this._closed) return;
+        if (this._closed || this.banned) return;
         if (this.retryCount >= MAX_RETRIES) {
             log(this.sessionId, 'Max retries reached — closing session');
             this.destroy();
             return;
         }
-
         const delay = RECONNECT_DELAYS[this.retryCount] * 1000;
         this.retryCount++;
         log(this.sessionId, `Reconnect in ${delay / 1000}s (attempt ${this.retryCount}/${MAX_RETRIES})`);
-
         this._reconnTimer = setTimeout(() => {
-            if (!this._closed) this._connect();
+            if (!this._closed && !this.banned) this._connect();
         }, delay);
     }
-
-    // ---- Idle timer ---------------------------------------
 
     _resetIdleTimer() {
         if (this._idleTimer) clearTimeout(this._idleTimer);
@@ -596,15 +500,13 @@ class BotSession {
         }, IDLE_TIMEOUT_MS);
     }
 
-    // ---- Cleanup ------------------------------------------
-
     destroy() {
         if (this._closed) return;
         this._closed = true;
         this.status  = 'closed';
 
-        if (this._idleTimer)   { clearTimeout(this._idleTimer);   this._idleTimer   = null; }
-        if (this._reconnTimer) { clearTimeout(this._reconnTimer);  this._reconnTimer = null; }
+        if (this._idleTimer)   { clearTimeout(this._idleTimer);  this._idleTimer   = null; }
+        if (this._reconnTimer) { clearTimeout(this._reconnTimer); this._reconnTimer = null; }
 
         if (this._socket && !this._socket.destroyed) {
             this._socket.removeAllListeners();
@@ -612,7 +514,6 @@ class BotSession {
         }
         this._socket = null;
 
-        // Hapus key/iv dari memory segera
         if (this.key) this.key.fill(0);
         if (this.iv)  this.iv.fill(0);
         this.key = null;
@@ -625,34 +526,21 @@ class BotSession {
 // ============================================================
 //  SESSION MANAGER
 // ============================================================
-
 class SessionManager {
     constructor() {
-        // Map<sessionId, BotSession>
-        this._sessions = new Map();
+        this._sessions = new Map();  // Map<sessionId, BotSession>
+        this._uidIndex = new Map();  // Map<uid, sessionId>
 
-        // Map<uid, sessionId> — untuk cegah duplikat per UID
-        this._uidIndex = new Map();
-
-        // Cleanup stale sessions setiap 5 menit
         this._cleanupTimer = setInterval(() => this._cleanupStale(), 5 * 60_000);
-        this._cleanupTimer.unref(); // jangan blokir process exit
+        this._cleanupTimer.unref();
     }
 
-    // ---- Public API ---------------------------------------
-
-    /**
-     * Buat session baru untuk user.
-     * Return false jika duplikat / melebihi batas.
-     */
     createSession({ uid, serverIp, serverPort, key, iv, region }) {
-        // Validasi input dasar
         if (!uid || !serverIp || !serverPort || !Buffer.isBuffer(key) || !Buffer.isBuffer(iv)) {
             log('MGR', 'createSession: invalid params');
             return false;
         }
 
-        // Cegah duplikat per UID
         if (this._uidIndex.has(uid)) {
             const existId  = this._uidIndex.get(uid);
             const existing = this._sessions.get(existId);
@@ -660,12 +548,10 @@ class SessionManager {
                 log('MGR', `Duplicate session rejected for uid=${uid}`);
                 return false;
             }
-            // Session lama sudah mati, boleh buat baru
             this._sessions.delete(existId);
             this._uidIndex.delete(uid);
         }
 
-        // Cek batas maksimum
         if (this._sessions.size >= MAX_SESSIONS) {
             log('MGR', `Max sessions (${MAX_SESSIONS}) reached — rejecting uid=${uid}`);
             return false;
@@ -683,32 +569,41 @@ class SessionManager {
     }
 
     /**
-     * Notifikasi squad join — dipanggil dari proxy.js saat
-     * mendeteksi event join di traffic game.
+     * Dipanggil dari proxy.js (via setTcpManager) saat response
+     * Garena mengindikasikan akun di-ban.
+     * Session langsung di-destroy dan dihapus dari map.
      */
+    handleBannedUid(uid, banMode) {
+        const sessionId = this._uidIndex.get(uid);
+        if (!sessionId) {
+            log('MGR', `handleBannedUid: no session for uid=${uid}`);
+            return;
+        }
+        const session = this._sessions.get(sessionId);
+        if (session) {
+            session.markBanned(banMode || 1); // destroy + set banned flag
+        }
+        // Hapus dari index & map segera
+        this._sessions.delete(sessionId);
+        this._uidIndex.delete(uid);
+        log('MGR', `🚫 Banned session cleaned up: uid=${uid} (remaining=${this._sessions.size})`);
+    }
+
     notifySquadJoin(uid, squadOwnerUid) {
         const session = this._getByUid(uid);
         if (session) session.notifySquadJoin(squadOwnerUid);
     }
 
-    /**
-     * Hapus session user (saat client disconnect dari proxy).
-     */
     removeByUid(uid) {
         const sessionId = this._uidIndex.get(uid);
         if (!sessionId) return;
-
         const session = this._sessions.get(sessionId);
         if (session) session.destroy();
-
         this._sessions.delete(sessionId);
         this._uidIndex.delete(uid);
         log('MGR', `Session removed for uid=${uid}`);
     }
 
-    /**
-     * Update lastActivity saat client masih aktif.
-     */
     touchByUid(uid) {
         const session = this._getByUid(uid);
         if (session) {
@@ -717,23 +612,21 @@ class SessionManager {
         }
     }
 
-    /** Status ringkas untuk endpoint diagnostik */
     getStatus() {
         const active = [];
         for (const [sid, s] of this._sessions) {
             active.push({
-                sessionId:    sid,
-                uid:          s.uid,
-                status:       s.status,
-                inSquad:      s.inSquad,
-                retryCount:   s.retryCount,
-                idleSec:      Math.floor((Date.now() - s.lastActivity) / 1000),
+                sessionId:  sid,
+                uid:        s.uid,
+                status:     s.status,
+                inSquad:    s.inSquad,
+                banned:     s.banned,
+                retryCount: s.retryCount,
+                idleSec:    Math.floor((Date.now() - s.lastActivity) / 1000),
             });
         }
         return { total: active.length, max: MAX_SESSIONS, sessions: active };
     }
-
-    // ---- Internal ----------------------------------------
 
     _getByUid(uid) {
         const sessionId = this._uidIndex.get(uid);
@@ -752,32 +645,29 @@ class SessionManager {
         let   removed = 0;
         for (const [sid, session] of this._sessions) {
             const idle = now - session.lastActivity;
-            if (session._closed || idle > IDLE_TIMEOUT_MS + 30_000) {
+            if (session._closed || session.banned || idle > IDLE_TIMEOUT_MS + 30_000) {
                 session.destroy();
                 this._sessions.delete(sid);
                 this._uidIndex.delete(session.uid);
                 removed++;
             }
         }
-        if (removed > 0) log('MGR', `Stale cleanup: removed ${removed} sessions (remaining=${this._sessions.size})`);
+        if (removed > 0)
+            log('MGR', `Stale cleanup: removed ${removed} sessions (remaining=${this._sessions.size})`);
     }
 
-    /** Graceful shutdown — dipanggil saat process exit */
     shutdown() {
         clearInterval(this._cleanupTimer);
         log('MGR', `Shutting down — closing ${this._sessions.size} sessions`);
-        for (const session of this._sessions.values()) {
-            session.destroy();
-        }
+        for (const session of this._sessions.values()) session.destroy();
         this._sessions.clear();
         this._uidIndex.clear();
     }
 }
 
 // ============================================================
-//  LOGGER (jangan log credential/token/data sensitif)
+//  LOGGER
 // ============================================================
-
 function log(tag, msg) {
     const ts = new Date().toISOString().slice(11, 23);
     console.log(`[TCP:${tag}] [${ts}] ${msg}`);
@@ -786,14 +676,9 @@ function log(tag, msg) {
 // ============================================================
 //  SINGLETON EXPORT
 // ============================================================
-
 const manager = new SessionManager();
 
-// Graceful shutdown hooks
-function _shutdown() {
-    manager.shutdown();
-}
-process.once('SIGINT',  _shutdown);
-process.once('SIGTERM', _shutdown);
+process.once('SIGINT',  () => manager.shutdown());
+process.once('SIGTERM', () => manager.shutdown());
 
 module.exports = { manager, BotSession, log };
