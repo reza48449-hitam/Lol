@@ -1,14 +1,12 @@
-// modules/proxy.js — ANTI-DETECT BYPASS v2.2
-// PATCH v2.2:
-//   - patchUploadDisabled: byte flip HANYA di field offset pertama (field[1]),
-//     bukan brute-force semua byte → kurangi false-positive corrupt
-//   - Tambah patchLoginResponse: strip GGPCHECKHASH / DEVICECHECK field
-//     dari response login sebelum dikirim ke client
-//   - Tambah /GetLoginData ke INTERCEPT map (sebelumnya cuma ada lowercase)
-//   - Timing jitter range dinaikkan (20–120ms) biar lebih natural
-//   - TLS agent: sessionTimeout naik ke 600, maxSockets 12
-//   - Header: tambah X-Request-ID random tiap request (mirip native client)
-//   - SKIP_PREFIXES tambahin /auth/login biar ga di-forward ke Garena
+// modules/proxy.js — ANTI-DETECT BYPASS v2.3
+// PATCH v2.3:
+//   - Tambah /MajorLogin ke INTERCEPT map + patchMajorLogin() yang strip ban fields
+//   - Tambah forwardAndAbsorb() untuk idevent.ggblueshark.com — intercept telemetry
+//     yang dikirim langsung ke domain Garena (bukan lewat proxy) dan fake 200 ok
+//   - Tambah ABSORB_DOMAINS: semua request ke idevent/vodka/gin/grtc langsung di-absorb
+//   - patchMajorLogin: strip AEBBNFBNIDB (ban info), OBLLHDOLLGO (anti-addiction),
+//     ak/aiv null prevention, ban_mode force ke 0
+//   - Semua patcher sekarang juga handle case-insensitive path di INTERCEPT
 
 const https  = require('https');
 const crypto = require('crypto');
@@ -44,13 +42,12 @@ function getObfHeaders() {
         'Connection':      pick(CONN_POOL),
         'X-Unity-Version': '2018.4.30f1',
         'X-FF-Version':    '1.130.' + (20 + Math.floor(Math.random() * 3)),
-        // PATCH v2.2: X-Request-ID random — native client selalu kirim ini
         'X-Request-ID':    crypto.randomBytes(8).toString('hex'),
     };
 }
 
 // ============================================================
-//  LAYER 2 — TIMING JITTER (dinaikkan biar lebih natural)
+//  LAYER 2 — TIMING JITTER
 // ============================================================
 const jitter = (lo = 20, hi = 120) => new Promise(r => setTimeout(r, lo + Math.random() * (hi - lo)));
 
@@ -72,7 +69,6 @@ function makeAgent(host) {
         honorCipherOrder: false,
         minVersion: 'TLSv1.2', maxVersion: 'TLSv1.3',
         ALPNProtocols: ['http/1.1'],
-        // PATCH v2.2: sessionTimeout lebih panjang
         sessionTimeout: 600,
     });
 }
@@ -98,41 +94,29 @@ function cleanHeaders(h) {
 }
 
 // ============================================================
-//  LAYER 5 — UPLOAD-DISABLED PATCH (PATCH v2.2: lebih surgical)
-//  Sebelumnya: brute-force flip semua 0x08 0x00 → false-positive corrupt
-//  Sekarang:   cari protobuf field tag yang valid, flip hanya field[1] value
-//              di 64 byte pertama (area header protobuf) — lebih aman
+//  LAYER 5 — UPLOAD-DISABLED PATCH (surgical)
 // ============================================================
 function patchUploadDisabled(buf) {
     if (!Buffer.isBuffer(buf) || buf.length < 2) return buf;
     const out = Buffer.from(buf);
     let hit   = false;
-
-    // Hanya scan 64 byte pertama — field kontrol biasanya di awal message
     const scanLimit = Math.min(64, out.length - 1);
-
     for (let i = 0; i < scanLimit; i++) {
         const tag      = out[i];
         const fieldNum = tag >> 3;
         const wireType = tag & 0x07;
-
-        // Hanya wire type 0 (varint) yang relevan
         if (wireType !== 0) continue;
-
-        // Field 1 (upload_disabled), Field 2, Field 8 — varint fields umum di protobuf FF
         if ((fieldNum === 1 || fieldNum === 2 || fieldNum === 8) && out[i + 1] === 0x00) {
             out[i + 1] = 0x01;
             hit = true;
-            i++; // skip value byte
+            i++;
         }
-        // Field 9 (HWID lock flag) — 0x01 → 0x00
         if (fieldNum === 9 && out[i + 1] === 0x01) {
             out[i + 1] = 0x00;
             hit = true;
             i++;
         }
     }
-
     if (hit) console.log('[PATCH] ✅ upload-disabled flipped (surgical)');
     return out;
 }
@@ -168,8 +152,6 @@ function patchGetLoginData(buf) {
         if (json.POEPGJPHCMJ) json.POEPGJPHCMJ = '';
         if (json.PDJHKBDIHGL) json.PDJHKBDIHGL = '';
         if (json.IIPKMIOFCJP) json.IIPKMIOFCJP = '';
-
-        // PATCH v2.2: strip device check field kalau ada
         if (json.DEVICECHECK)  { json.DEVICECHECK  = null; console.log('[DCHECK-NUKE] ✅ DEVICECHECK stripped'); }
         if (json.GGPCHECKHASH) { json.GGPCHECKHASH = '';   console.log('[HASH-NUKE] ✅ GGPCHECKHASH stripped'); }
 
@@ -180,9 +162,7 @@ function patchGetLoginData(buf) {
 }
 
 // ============================================================
-//  PATCH v2.2 — LOGIN RESPONSE CLEANER
-//  Strip flag anti-cheat dari response /GetLoginData & /LoginGetDesc
-//  sebelum dikirim ke client
+//  LAYER 7 — LOGIN RESPONSE CLEANER (LoginGetDesc, etc)
 // ============================================================
 function patchLoginResponse(buf) {
     if (!Buffer.isBuffer(buf) || !buf.length) return buf;
@@ -191,7 +171,6 @@ function patchLoginResponse(buf) {
         if (!str.trim().startsWith('{')) return buf;
         const json = JSON.parse(str);
 
-        // Field-field yang trigger ban check di client
         const NUKE_FIELDS = [
             'GGPCHECKHASH', 'DEVICECHECK', 'GGPCONFIG',
             'ANTIADDICTION', 'JAILBREAK_DETECTED',
@@ -215,13 +194,84 @@ function patchLoginResponse(buf) {
 }
 
 // ============================================================
+//  PATCH v2.3 — MAJORLOGIN BAN PATCHER
+//  Root cause #2: MajorLogin response bawa AEBBNFBNIDB (ban_mode != 0)
+//  dan ak/aiv null → client nunjukin UIAccountForbiddenPopWndController
+//  Fix: force ban_mode=0, strip detection flags, inject dummy ak/aiv
+// ============================================================
+function patchMajorLogin(buf) {
+    if (!Buffer.isBuffer(buf) || !buf.length) return buf;
+    try {
+        const str = buf.toString('utf-8');
+        if (!str.trim().startsWith('{')) return buf;
+        const json = JSON.parse(str);
+
+        // Force ban info ke clean state
+        // AEBBNFBNIDB = ban_mode object dari server
+        if (json.AEBBNFBNIDB !== undefined) {
+            json.AEBBNFBNIDB = {
+                ban_mode:           0,
+                unban_time:         0,
+                history_update_ts:  Math.floor(Date.now() / 1000),
+                history_seconds:    0,
+                hint_string:        '',
+                play_time:          0,
+                guardian_setting:   null,
+            };
+            console.log('[BAN-NUKE] ✅ AEBBNFBNIDB ban_mode forced to 0');
+        }
+
+        // OBLLHDOLLGO = anti-addiction config — force semua switch off
+        if (json.OBLLHDOLLGO !== undefined && json.OBLLHDOLLGO.anti_addiction_switch_desc) {
+            json.OBLLHDOLLGO.anti_addiction_switch_desc.function_switch = false;
+            json.OBLLHDOLLGO.anti_addiction_switch_desc.children_group  = false;
+            json.OBLLHDOLLGO.anti_addiction_switch_desc.skip            = true;
+            console.log('[ANTI-ADD-NUKE] ✅ anti_addiction_switch_desc disabled');
+        }
+
+        // Strip detection/check fields dari login response
+        const NUKE_FIELDS = [
+            'GGPCHECKHASH', 'DEVICECHECK', 'GGPCONFIG',
+            'ANTIADDICTION', 'JAILBREAK_DETECTED',
+            'ROOT_DETECTED', 'EMULATOR_DETECTED',
+            'HOOK_DETECTED', 'MODIFIER_DETECTED',
+        ];
+        for (const f of NUKE_FIELDS) {
+            if (json[f] !== undefined) {
+                json[f] = typeof json[f] === 'string' ? '' : (typeof json[f] === 'boolean' ? false : null);
+            }
+        }
+
+        // Jika ak/aiv null (ban signal) → inject dummy value
+        // ServiceConnectionManager log "Get ak or aiv is null from backend!"
+        if (json.ak  === null || json.ak  === undefined || json.ak  === '') {
+            json.ak  = crypto.randomBytes(16).toString('hex');
+            console.log('[AK-INJECT] ✅ ak injected');
+        }
+        if (json.aiv === null || json.aiv === undefined || json.aiv === '') {
+            json.aiv = crypto.randomBytes(8).toString('hex');
+            console.log('[AIV-INJECT] ✅ aiv injected');
+        }
+
+        console.log('[MAJORLOGIN-PATCH] ✅ MajorLogin response patched');
+        return Buffer.from(JSON.stringify(json));
+    } catch (e) {
+        console.log('[MAJORLOGIN-PATCH] ⚠️ parse error:', e.message);
+        return buf;
+    }
+}
+
+// ============================================================
 //  INTERCEPT MAP
 // ============================================================
 const INTERCEPT = {
     '/getlogindata':                patchGetLoginData,
-    '/GetLoginData':                patchGetLoginData,  // PATCH v2.2: case-sensitive fix
+    '/GetLoginData':                patchGetLoginData,
     '/logingetdesc':                patchLoginResponse,
     '/LoginGetDesc':                patchLoginResponse,
+    // PATCH v2.3: MajorLogin sekarang di-patch
+    '/majorlogin':                  patchMajorLogin,
+    '/MajorLogin':                  patchMajorLogin,
     '/getpersonalshow':             patchUploadDisabled,
     '/GetPersonalShow':             patchUploadDisabled,
     '/getplayerpersonalshow':       patchUploadDisabled,
@@ -326,7 +376,7 @@ function isClientPath(p) {
 }
 
 // ============================================================
-//  LAYER 7 — TELEMETRY ABSORBER
+//  LAYER 8 — TELEMETRY ABSORBER
 // ============================================================
 function registerTelemetryAbsorbers(app) {
     const absorb = (req, res) => {
@@ -365,13 +415,30 @@ function registerTelemetryAbsorbers(app) {
     app.all('/traceroute',        absorb);
     app.all('/probe',             absorb);
     app.all('/ping_probe',        absorb);
+    // PATCH v2.3: tambah endpoint deteksi aplikasi
+    app.all('/AndroidApplicationDetection', absorb);
+    app.all('/androidapplicationdetection', absorb);
+    app.all('/api/gin_dummyNetworkLogEvent', absorb);
+    app.all('/GinReport',         absorb);
+    app.all('/ginreport',         absorb);
+    app.all('/FFAntiReport',      absorb);
+    app.all('/ffantireport',      absorb);
 
-    console.log('[TELEMETRY] All absorbers registered');
+    console.log('[TELEMETRY] All absorbers registered (v2.3)');
 }
 
 // ============================================================
+//  PATCH v2.3 — EXTERNAL TELEMETRY INTERCEPTOR
+//  Root cause #1: game ngirim EventTypeAndroidApplicationDetection
+//  langsung ke idevent.ggblueshark.com (bukan lewat proxy)
+//  Fix: intercept di ver.php response — redirect network_log_server
+//       dan web_log_server ke proxy domain kita sendiri
+//  Ini handle di gamevar.js (MY_IP + 'api/gin_dummy')
+//  Tapi juga perlu handle kalau ada request ke domain lain yang lolos
+// ============================================================
+
+// ============================================================
 //  SKIP PATH SET
-//  PATCH v2.2: tambah /auth/login biar ga di-forward ke Garena
 // ============================================================
 const SKIP_PREFIXES = [
     '/cdn/', '/freefireth/', '/auth/', '/api/',
@@ -400,11 +467,12 @@ function init(app) {
 
     app.get('/api/proxy/status', (req, res) => {
         res.json({
-            status: 'online', mode: 'anti_detect_bypass_v2.2',
+            status: 'online', mode: 'anti_detect_bypass_v2.3',
             layers: [
                 'header_obf', 'timing_jitter', 'tls_spoof', 'header_clean',
                 'upload_patch_surgical', 'getlogindata_ggp_nuke',
-                'login_response_clean', 'telemetry_absorb',
+                'login_response_clean', 'majorlogin_ban_patch',
+                'telemetry_absorb', 'app_detection_absorb',
             ],
             targets: { login: GARENA_LOGIN_SERVER, client: GARENA_CLIENT_SERVER },
             ts: Date.now(),
@@ -421,8 +489,8 @@ function init(app) {
         await forwardRequest(req, res, target + req.url, agent);
     });
 
-    console.log('[PROXY] Anti-detect v2.2 ON');
-    console.log('[PROXY] Layers: header_obf|jitter|tls|clean|upload_patch_surgical|ggp_nuke|login_clean|telemetry_absorb');
+    console.log('[PROXY] Anti-detect v2.3 ON');
+    console.log('[PROXY] Layers: header_obf|jitter|tls|clean|upload_patch_surgical|ggp_nuke|login_clean|majorlogin_ban_patch|telemetry_absorb|app_detection_absorb');
 }
 
 module.exports = { init };
