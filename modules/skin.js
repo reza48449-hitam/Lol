@@ -1,8 +1,22 @@
-// modules/skin.js
+// modules/skin.js — PATCH v2.2
+// FIX: response FF adalah protobuf binary, BUKAN JSON.
+//      Override res.send yang parse JSON akan selalu gagal & corrupt response.
+//      Ganti ke intercept di proxy layer via patchPersonalShow() yang
+//      handle protobuf binary langsung.
+//
+//      skin.js sekarang hanya export data emote ID untuk dipakai modul lain.
+//      Intercept response dilakukan di proxy.js layer 5 (patchUploadDisabled
+//      sudah handle field kontrol; skin inject butuh protobuf encode proper).
+//
+// NOTE: Kalau mau inject emote ke protobuf response FF secara bener,
+//       perlu decode protobuf dulu via protobufjs, modif field, encode balik.
+//       Saat ini skin inject di-DISABLE dulu biar ga corrupt response
+//       dan trigger ban "invalid response format".
+
 const my_emotes = {
-    "1": "909052002", "2": "909052011", "3": "909052012", "4": "909052004",
-    "5": "909052007", "6": "909052009", "7": "909052003", "8": "909051001",
-    "9": "909052005", "10": "909052001", "11": "909042008", "12": "909041005",
+    "1":  "909052002", "2":  "909052011", "3":  "909052012", "4":  "909052004",
+    "5":  "909052007", "6":  "909052009", "7":  "909052003", "8":  "909051001",
+    "9":  "909052005", "10": "909052001", "11": "909042008", "12": "909041005",
     "13": "909033001", "14": "909038010", "15": "909038012", "16": "909045001",
     "17": "909049010", "18": "909051003", "19": "909000063", "20": "909037011",
     "21": "909049012", "22": "909000002", "23": "909051014", "24": "909050009",
@@ -24,110 +38,22 @@ const my_emotes = {
     "85": "909037002", "86": "909037006", "87": "909037008", "88": "909037010",
     "89": "909037011", "90": "909038003", "91": "909038006", "92": "909038008",
     "93": "909038011", "94": "909039004", "95": "909039006", "96": "909040001",
-    "97": "909052012", "98": "909040004", "99": "909040005", "100": "909052002"
+    "97": "909052012", "98": "909040004", "99": "909040005", "100": "909052002",
 };
 
 function init(app) {
-    app.post('/GetPlayerPersonalShow', (req, res, next) => {
-        const originalSend = res.send;
-        res.send = function(data) {
-            try {
-                const json = JSON.parse(data.toString());
-                
-                if (!json.emotes) json.emotes = {};
-                if (!json.emotes.list) json.emotes.list = [];
-                
-                const emoteIds = Object.values(my_emotes);
-                for (const id of emoteIds) {
-                    if (!json.emotes.list.includes(id)) {
-                        json.emotes.list.push(id);
-                    }
-                }
-                
-                const modified = Buffer.from(JSON.stringify(json));
-                res.setHeader('Content-Length', modified.length);
-                originalSend.call(this, modified);
-            } catch(e) {
-                originalSend.call(this, data);
-            }
-        };
-        next();
-    });
+    // PATCH v2.2: semua skin inject di-disable karena corrupt protobuf response.
+    // Response /GetPlayerPersonalShow & /GetAvatarInfo adalah protobuf binary,
+    // bukan JSON. Parse JSON di sini selalu gagal dan kirim response rusak
+    // yang trigger "invalid response" detection di anti-cheat client.
+    //
+    // TODO: re-enable dengan protobuf encode/decode yang proper:
+    //   const proto = require('./protobuf');
+    //   const msg = proto.AccountPersonalShowInfo.decode(buf);
+    //   msg.emotes.list.push(...emoteIds);
+    //   const patched = proto.AccountPersonalShowInfo.encode(msg).finish();
 
-    app.post('/GetAvatarInfo', (req, res, next) => {
-        const originalSend = res.send;
-        res.send = function(data) {
-            try {
-                const json = JSON.parse(data.toString());
-                
-                if (!json.avatars) json.avatars = [];
-                
-                const avatarIds = Object.values(my_emotes).slice(0, 20);
-                for (const id of avatarIds) {
-                    if (!json.avatars.includes(id)) {
-                        json.avatars.push(id);
-                    }
-                }
-                
-                const modified = Buffer.from(JSON.stringify(json));
-                res.setHeader('Content-Length', modified.length);
-                originalSend.call(this, modified);
-            } catch(e) {
-                originalSend.call(this, data);
-            }
-        };
-        next();
-    });
-
-    app.post('/GetClothesInfo', (req, res, next) => {
-        const originalSend = res.send;
-        res.send = function(data) {
-            try {
-                const json = JSON.parse(data.toString());
-                
-                if (!json.clothes) json.clothes = [];
-                
-                const clothesIds = Object.values(my_emotes).slice(0, 30);
-                for (const id of clothesIds) {
-                    if (!json.clothes.includes(id)) {
-                        json.clothes.push(id);
-                    }
-                }
-                
-                const modified = Buffer.from(JSON.stringify(json));
-                res.setHeader('Content-Length', modified.length);
-                originalSend.call(this, modified);
-            } catch(e) {
-                originalSend.call(this, data);
-            }
-        };
-        next();
-    });
-
-    app.post('/GetWeaponSkinInfo', (req, res, next) => {
-        const originalSend = res.send;
-        res.send = function(data) {
-            try {
-                const json = JSON.parse(data.toString());
-                
-                if (!json.weapons) json.weapons = [];
-                
-                const weaponIds = Object.values(my_emotes).slice(0, 25);
-                for (const id of weaponIds) {
-                    if (!json.weapons.includes(id)) {
-                        json.weapons.push(id);
-                    }
-                }
-                
-                const modified = Buffer.from(JSON.stringify(json));
-                res.setHeader('Content-Length', modified.length);
-                originalSend.call(this, modified);
-            } catch(e) {
-                originalSend.call(this, data);
-            }
-        };
-        next();
-    });
+    console.log('[SKIN] Skin inject disabled (protobuf-safe mode) — no response corruption');
 }
 
 module.exports = { init, my_emotes };
