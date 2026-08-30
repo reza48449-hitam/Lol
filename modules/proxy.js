@@ -1,8 +1,35 @@
+// modules/proxy.js
 const https = require('https');
 
 const GARENA_LOGIN_SERVER  = 'https://loginbp.ggblueshark.com';
 const GARENA_CLIENT_SERVER = 'https://clientbp.ggpolarbear.com';
 
+// ============ ABSORB TELEMETRY — semua endpoint yang game kirim tapi kita buang ============
+const TELEMETRY_PATHS = new Set([
+    '/api/gin_dummyNetworkLogEvent',  // FIX: ini yang 404 di log kamu
+    '/api/web_dummyNetworkLogEvent',
+    '/api/network_log',
+    '/web_log',
+    '/api/gin_dummy',
+    '/api/web_dummy',
+    '/NetworkLogEvent',
+    '/api/log',
+    '/api/report',
+    '/api/crash',
+    '/api/analytics',
+]);
+
+function isTelemetry(p) {
+    return TELEMETRY_PATHS.has(p) ||
+           p.includes('network_log') ||
+           p.includes('web_log') ||
+           p.includes('gin_dummy') ||
+           p.includes('web_dummy') ||
+           p.includes('analytics') ||
+           p.includes('crashlytics');
+}
+
+// ============ STRIP TELEMETRY DARI RESPONSE JSON ============
 function stripTelemetry(buf) {
     if (!Buffer.isBuffer(buf) || !buf.length) return buf;
     try {
@@ -23,7 +50,7 @@ function stripTelemetry(buf) {
 
         for (const f of KILL) {
             if (json[f] !== undefined) {
-                if (typeof json[f] === 'string')  json[f] = '';
+                if (typeof json[f] === 'string')   json[f] = '';
                 else if (typeof json[f] === 'boolean') json[f] = false;
                 else json[f] = null;
             }
@@ -36,6 +63,7 @@ function stripTelemetry(buf) {
     } catch (e) { return buf; }
 }
 
+// ============ FORWARD REQUEST KE GARENA ============
 async function forwardRequest(req, res, targetUrl) {
     const target = new URL(targetUrl);
     const body   = Buffer.isBuffer(req.body) && req.body.length > 0 ? req.body : null;
@@ -86,6 +114,7 @@ async function forwardRequest(req, res, targetUrl) {
     });
 }
 
+// ============ CEK PATH CLIENT vs LOGIN ============
 function isClientPath(p) {
     const lp = p.toLowerCase();
     return lp.includes('personal') || lp.includes('player') || lp.includes('client') ||
@@ -107,7 +136,18 @@ function shouldSkip(p) {
     return false;
 }
 
+// ============ INIT ============
 function init(app) {
+    // Absorb semua telemetry — jawab 200 kosong biar game happy
+    app.all('*', (req, res, next) => {
+        if (isTelemetry(req.path)) {
+            console.log(`[TELEMETRY] Absorbed: ${req.path}`);
+            return res.status(200).json({ code: 0 });
+        }
+        next();
+    });
+
+    // Forward sisanya ke Garena
     app.all('*', async (req, res, next) => {
         const p = req.path;
         if (shouldSkip(p)) return next();
@@ -116,7 +156,7 @@ function init(app) {
         await forwardRequest(req, res, target + req.url);
     });
 
-    console.log('[PROXY] Simple bypass ON');
+    console.log('[PROXY] Bypass ON + Telemetry absorber ON');
 }
 
 module.exports = { init };
