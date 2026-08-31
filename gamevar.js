@@ -10,10 +10,10 @@ const gamevarLines = [
   "X8ScopeMaxSetting,X8ScopeMaxSetting,float,9.5,,",
   "FreeLookMaxSetting,FreeLookMaxSetting,float,9.5,,",
   "FreeMoveAngularSpeed,FreeMoveAngularSpeed,float,6.9,,",
-  "FreeMoveAngularSpeedStand,FreeMoveAngularSpeedStand,float,7.2,,",
+  "FreeMoveAngularSpeedStand,FreeMoveAngularSpeedStand,float,10.0,,",
   "FreeMoveAngularSpeedCrouch,FreeMoveAngularSpeedCrouch,float,6.9,,",
   "FreeMoveAngularSpeedCreep,FreeMoveAngularSpeedCreep,float,6.9,,",
-  "ResetRotationSpeed,ResetRotationSpeed,float,6.9,,",
+  "ResetRotationSpeed,ResetRotationSpeed,float,10.0,,",
 
   // === ANIMATION ===
   "NoResetUplayerAnimationWhenReloading,NoResetUplayerAnimationWhenReloading,bool,True,,",
