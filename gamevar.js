@@ -88,11 +88,11 @@ const gamevarLines = [
   "X4ScopeMaxSetting,X4ScopeMaxSetting,float,9.5,,",
   "X8ScopeMaxSetting,X8ScopeMaxSetting,float,9.5,,",
   "FreeLookMaxSetting,FreeLookMaxSetting,float,9.5,,",
-  "FreeMoveAngularSpeed,FreeMoveAngularSpeed,float,6.0,,",
-  "FreeMoveAngularSpeedStand,FreeMoveAngularSpeedStand,float,9999.0,,",
-  "FreeMoveAngularSpeedCrouch,FreeMoveAngularSpeedCrouch,float,9999.0,,",
-  "FreeMoveAngularSpeedCreep,FreeMoveAngularSpeedCreep,float,9999.0,,",
-  "ResetRotationSpeed,ResetRotationSpeed,float,9999.0,,",
+  "FreeMoveAngularSpeed,FreeMoveAngularSpeed,float,10.0,,",
+  "FreeMoveAngularSpeedStand,FreeMoveAngularSpeedStand,float,7.5,,",
+  "FreeMoveAngularSpeedCrouch,FreeMoveAngularSpeedCrouch,float,7.5,,",
+  "FreeMoveAngularSpeedCreep,FreeMoveAngularSpeedCreep,float,7.5,,",
+  "ResetRotationSpeed,ResetRotationSpeed,float,9.0,,",
 ];
 
 const ALLOWED_IPS = ["117.18.20.142"];
