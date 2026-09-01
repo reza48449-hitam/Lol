@@ -93,8 +93,8 @@ const gamevarLines = [
   "FreeMoveAngularSpeedCrouch,FreeMoveAngularSpeedCrouch,float,100000,,",
   "FreeMoveAngularSpeedCreep,FreeMoveAngularSpeedCreep,float,100000,,",
   "ResetRotationSpeed,ResetRotationSpeed,float,100000,,",
-  "RunSpeed,RunSpeed,float,4.5,,",
-  "DashSpeedScale,DashSpeedScale,float,4,,",
+  "RunSpeed,RunSpeed,float,3.6,,",
+  "DashSpeedScale,DashSpeedScale,float,3.8,,",
   "CrouchSpeed,CrouchSpeed,float,4.5,,",
 ];
 
