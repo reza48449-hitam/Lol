@@ -32,6 +32,14 @@ function safeLocalPath(urlPath) {
         path.join(BASE_DIR, p.replace(/^\/live\/ABHotUpdates\/?/, '')),
     ];
 
+    // Some OB54 fileinfo entries request android_astc/<version>/gameassetbundles/codepatch,
+    // while this archive stores that codepatch under live/ABHotUpdates/gameassetbundles/codepatch.
+    // Only apply this exact codepatch fallback; do not remap other Android ASTC assets.
+    const codepatchMatch = /^\/live\/ABHotUpdates\/android_astc\/[^/]+\/(gameassetbundles\/codepatch\/[^/]+)$/.exec(p);
+    if (codepatchMatch) {
+        candidates.push(path.join(BASE_DIR, 'live', 'ABHotUpdates', codepatchMatch[1]));
+    }
+
     for (const candidate of candidates) {
         const resolved = path.resolve(candidate);
         if (resolved === BASE_DIR || resolved.startsWith(BASE_DIR + path.sep)) {
