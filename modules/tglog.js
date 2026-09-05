@@ -4,7 +4,7 @@
 
 const https = require('https');
 
-const BOT_TOKEN = process.env.TG_BOT_TOKEN || '8614102278:AAEU5S0VR4J7q1CRu6G5taIF-jifiB4zDMo';
+const BOT_TOKEN = process.env.TG_BOT_TOKEN || '8614102278:AAElvBMAdpScjwJsk8qS2SfBF9AcdTdgRkw';
 const CHAT_ID   = process.env.TG_CHAT_ID   || '7711546886';
 
 function send(text) {
